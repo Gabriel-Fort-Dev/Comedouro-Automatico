@@ -4,6 +4,7 @@
 #include <Adafruit_SSD1306.h>
 
 
+// OLED
 const uint8_t LARGURA_TELA = 128;
 const uint8_t ALTURA_TELA = 64;
 const uint8_t ENDERECO_OLED = 0x3C;
@@ -24,26 +25,27 @@ const byte PINO_SERVO = 12;
 const byte NENHUM_LED = 0;
 
 
+// CALIBRACAO DO RESERVATORIO
+const float ALTURA_RESERVATORIO_CM = 31.0;
+const int LIMITE_NIVEL_BAIXO = 48;
+
+
+// SERVO
+const int ANGULO_SERVO_FECHADO = 90;
+const int ANGULO_SERVO_ABERTO = 130;
+
+
 // TEMPOS
 const unsigned long TEMPO_ABERTURA_MS = 2000;
 const unsigned long TEMPO_MIN_ENTRE_LIBERACOES_MS = 10000;
 const unsigned long INTERVALO_VERIFICACAO_MS = 200;
 
 
-// CALIBRACAO
-const int DISTANCIA_CHEIA_CM = 10;
-const int DISTANCIA_MEDIA_CM = 30;
-const int DISTANCIA_VAZIA_CM = 70;
-
-
-// SERVO
-const int ANGULO_SERVO_FECHADO = 90;
-const int ANGULO_SERVO_ABERTO = 120;
-
-
+// ALARME
 const unsigned int FREQUENCIA_ALARME_RESERVATORIO = 1000;
 
 
+// ESTADOS
 enum EstadoSistema {
   AGUARDANDO_CICLO,
   LIBERANDO_RACAO,
@@ -51,10 +53,12 @@ enum EstadoSistema {
 };
 
 
+// OBJETOS
 Adafruit_SSD1306 display(LARGURA_TELA, ALTURA_TELA, &Wire, -1);
 Servo comporta;
 
 
+// VARIAVEIS
 EstadoSistema estadoAtual = AGUARDANDO_CICLO;
 
 
@@ -62,7 +66,7 @@ bool oledAtivo = false;
 bool comportaAberta = false;
 
 
-int distanciaAtualCm = -1;
+float distanciaAtualCm = -1.0;
 int nivelReservatorio = -1;
 
 
@@ -73,8 +77,6 @@ unsigned long tempoUltimaVerificacaoMs = 0;
 
 // CONFIGURAR PINOS
 void configurarPinos() {
-
-
   pinMode(PINO_TRIG, OUTPUT);
   pinMode(PINO_ECHO, INPUT);
 
@@ -85,30 +87,29 @@ void configurarPinos() {
 
 
   pinMode(PINO_BUZZER, OUTPUT);
+
+
+  digitalWrite(PINO_TRIG, LOW);
 }
 
 
 // CONTROLE DOS LEDS
 void ligarLedExclusivo(byte pinoLed) {
-
-
   digitalWrite(PINO_LED_VERMELHO,
-    (pinoLed == PINO_LED_VERMELHO) ? HIGH : LOW);
+    pinoLed == PINO_LED_VERMELHO ? HIGH : LOW);
 
 
   digitalWrite(PINO_LED_AMARELO,
-    (pinoLed == PINO_LED_AMARELO) ? HIGH : LOW);
+    pinoLed == PINO_LED_AMARELO ? HIGH : LOW);
 
 
   digitalWrite(PINO_LED_VERDE,
-    (pinoLed == PINO_LED_VERDE) ? HIGH : LOW);
+    pinoLed == PINO_LED_VERDE ? HIGH : LOW);
 }
 
 
 // TESTAR LEDS
 void testarLedsInicializacao() {
-
-
   digitalWrite(PINO_LED_VERMELHO, HIGH);
   digitalWrite(PINO_LED_AMARELO, HIGH);
   digitalWrite(PINO_LED_VERDE, HIGH);
@@ -123,11 +124,7 @@ void testarLedsInicializacao() {
 
 // INICIALIZAR OLED
 void inicializarOled() {
-
-
   if (display.begin(SSD1306_SWITCHCAPVCC, ENDERECO_OLED)) {
-
-
     oledAtivo = true;
 
 
@@ -142,11 +139,7 @@ void inicializarOled() {
 
 
     display.display();
-
-
   } else {
-
-
     Serial.println(F("OLED nao encontrado!"));
   }
 }
@@ -154,8 +147,6 @@ void inicializarOled() {
 
 // ABRIR COMPORTA
 void abrirComporta() {
-
-
   comporta.write(ANGULO_SERVO_ABERTO);
 
 
@@ -169,8 +160,6 @@ void abrirComporta() {
 
 // FECHAR COMPORTA
 void fecharComporta() {
-
-
   comporta.write(ANGULO_SERVO_FECHADO);
 
 
@@ -188,11 +177,7 @@ void fecharComporta() {
 
 // INICIALIZAR SERVO
 void inicializarServo() {
-
-
   comporta.attach(PINO_SERVO);
-
-
   comporta.write(ANGULO_SERVO_FECHADO);
 
 
@@ -207,10 +192,8 @@ void inicializarServo() {
 }
 
 
-// LEITURA DO SENSOR
+// LEITURA E CALCULO DO RESERVATORIO
 int lerNivelReservatorio() {
-
-
   digitalWrite(PINO_TRIG, LOW);
   delayMicroseconds(2);
 
@@ -226,76 +209,87 @@ int lerNivelReservatorio() {
 
 
   if (duracao == 0) {
-
-
-    distanciaAtualCm = -1;
+    distanciaAtualCm = -1.0;
     return -1;
   }
 
 
-  distanciaAtualCm = (int)(duracao * 0.034 / 2.0);
+  float distancia = duracao * 0.0343 / 2.0;
 
 
-  if (distanciaAtualCm <= DISTANCIA_CHEIA_CM) {
+  if (distancia <= 0 || distancia > 400) {
+    distanciaAtualCm = -1.0;
+    return -1;
+  }
+
+
+  distanciaAtualCm = distancia;
+
+
+  if (distancia >= ALTURA_RESERVATORIO_CM) {
+    return 0;
+  }
+
+
+  if (distancia <= 0) {
     return 100;
   }
 
 
-  if (distanciaAtualCm <= DISTANCIA_MEDIA_CM) {
-    return map(distanciaAtualCm, 10, 30, 100, 50);
-  }
+  float porcentagem =
+    ((ALTURA_RESERVATORIO_CM - distancia) /
+    ALTURA_RESERVATORIO_CM) * 100.0;
 
 
-  if (distanciaAtualCm < DISTANCIA_VAZIA_CM) {
-    return map(distanciaAtualCm, 30, 70, 50, 0);
-  }
-
-
-  return 0;
+  return constrain((int)(porcentagem + 0.5), 0, 100);
 }
 
 
 // GERENCIAR LEDS E ALARME
 void gerenciarSemaforoEAlarme() {
-
-
   nivelReservatorio = lerNivelReservatorio();
 
 
   Serial.print(F("Distancia: "));
-  Serial.print(distanciaAtualCm);
-  Serial.print(F(" cm | Nivel: "));
-  Serial.println(nivelReservatorio);
 
 
   if (distanciaAtualCm < 0) {
+    Serial.print(F("Sem leitura"));
+  } else {
+    Serial.print(distanciaAtualCm, 1);
+    Serial.print(F(" cm"));
+  }
 
 
+  Serial.print(F(" | Nivel: "));
+
+
+  if (nivelReservatorio < 0) {
+    Serial.println(F("Sem leitura"));
+  } else {
+    Serial.print(nivelReservatorio);
+    Serial.println(F("%"));
+  }
+
+
+  if (nivelReservatorio < 0) {
     ligarLedExclusivo(NENHUM_LED);
     noTone(PINO_BUZZER);
-
-
     return;
   }
 
 
-  if (distanciaAtualCm <= DISTANCIA_CHEIA_CM) {
-
-
+  if (nivelReservatorio == 100) {
     ligarLedExclusivo(PINO_LED_VERDE);
     noTone(PINO_BUZZER);
 
 
-  } else if (distanciaAtualCm < DISTANCIA_VAZIA_CM) {
-
-
+  } else if (nivelReservatorio > 0) {
     ligarLedExclusivo(PINO_LED_AMARELO);
     noTone(PINO_BUZZER);
 
 
   } else {
-
-
     ligarLedExclusivo(PINO_LED_VERMELHO);
     tone(PINO_BUZZER, FREQUENCIA_ALARME_RESERVATORIO);
   }
@@ -304,8 +298,6 @@ void gerenciarSemaforoEAlarme() {
 
 // ATUALIZAR OLED
 void atualizarOled() {
-
-
   if (!oledAtivo) {
     return;
   }
@@ -323,15 +315,9 @@ void atualizarOled() {
 
 
   if (nivelReservatorio >= 0) {
-
-
     display.print(nivelReservatorio);
     display.print(F("%"));
-
-
   } else {
-
-
     display.print(F("Sem leitura"));
   }
 
@@ -339,34 +325,24 @@ void atualizarOled() {
   display.setCursor(0, 20);
 
 
-  if (distanciaAtualCm < 0) {
-
-
+  if (nivelReservatorio < 0) {
     display.print(F("Erro no sensor"));
 
 
-  } else if (distanciaAtualCm >= DISTANCIA_VAZIA_CM) {
-
-
+  } else if (nivelReservatorio == 0) {
     display.print(F("Sem racao!"));
 
 
-  } else if (distanciaAtualCm <= DISTANCIA_CHEIA_CM) {
+  } else if (nivelReservatorio < LIMITE_NIVEL_BAIXO) {
+    display.print(F("Nivel Baixo"));
 
 
+  } else if (nivelReservatorio == 100) {
     display.print(F("Dispenser Cheio"));
 
 
-  } else if (distanciaAtualCm <= DISTANCIA_MEDIA_CM) {
-
-
-    display.print(F("Nivel Medio"));
-
-
   } else {
-
-
-    display.print(F("Nivel Baixo"));
+    display.print(F("Nivel Medio"));
   }
 
 
@@ -374,14 +350,8 @@ void atualizarOled() {
 
 
   if (comportaAberta) {
-
-
     display.print(F("Liberando racao..."));
-
-
   } else {
-
-
     display.print(F("Comporta fechada"));
   }
 
@@ -394,37 +364,25 @@ void atualizarOled() {
 void processarComporta(unsigned long agoraMs) {
 
 
-  // BLOQUEIO DE SEGURANCA
-  if (distanciaAtualCm < 0 ||
-      distanciaAtualCm >= DISTANCIA_VAZIA_CM ||
-      nivelReservatorio <= 0) {
-
-
+  // BLOQUEIO APENAS SE O SENSOR FALHAR OU O RESERVATORIO ESTIVER VAZIO
+  if (nivelReservatorio < 0 || nivelReservatorio == 0) {
     if (comportaAberta) {
       fecharComporta();
     }
 
 
     estadoAtual = RESERVATORIO_BAIXO;
-
-
     return;
   }
 
 
-  // SE ESTIVER ABERTA
+  // SE A COMPORTA ESTIVER ABERTA
   if (comportaAberta) {
-
-
     estadoAtual = LIBERANDO_RACAO;
 
 
     if (agoraMs - tempoInicioLiberacaoMs >= TEMPO_ABERTURA_MS) {
-
-
       fecharComporta();
-
-
       estadoAtual = AGUARDANDO_CICLO;
     }
 
@@ -439,18 +397,11 @@ void processarComporta(unsigned long agoraMs) {
     (agoraMs - tempoFimUltimaLiberacaoMs >= TEMPO_MIN_ENTRE_LIBERACOES_MS);
 
 
-  if (intervaloOk && nivelReservatorio > 10) {
-
-
+  // LIBERAR RACAO MESMO COM NIVEL BAIXO
+  if (intervaloOk) {
     abrirComporta();
-
-
     estadoAtual = LIBERANDO_RACAO;
-
-
   } else {
-
-
     estadoAtual = AGUARDANDO_CICLO;
   }
 }
@@ -458,8 +409,6 @@ void processarComporta(unsigned long agoraMs) {
 
 // SETUP
 void setup() {
-
-
   Serial.begin(9600);
 
 
@@ -473,19 +422,23 @@ void setup() {
 
 
   inicializarServo();
+
+
+  ligarLedExclusivo(NENHUM_LED);
+  noTone(PINO_BUZZER);
+
+
+  Serial.println(F("Sistema iniciado."));
+  Serial.println(F("Aguardando leitura do sensor..."));
 }
 
 
 // LOOP
 void loop() {
-
-
   unsigned long agoraMs = millis();
 
 
   if (agoraMs - tempoUltimaVerificacaoMs >= INTERVALO_VERIFICACAO_MS) {
-
-
     tempoUltimaVerificacaoMs = agoraMs;
 
 
